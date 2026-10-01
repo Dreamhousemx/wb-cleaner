@@ -1092,7 +1092,9 @@ function bindGlobal() {
   $('btnDrawerClear').onclick = () => drawer.clear();
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { closeModal(); drawer.close(); }
-    if (e.key === 'F5' || (e.ctrlKey && e.key === 'r')) { e.preventDefault(); scan(); }
+    // 注意：不要拦截 F5 / Ctrl+R。那是浏览器刷新，界面出问题时用户的第一反应就是按它，
+    // 劫持成「重新扫描」会让人以为界面坏了（重新扫描不会重新加载 app.js）。
+    // 重新扫描请用顶栏的「扫描」按钮。
   });
 }
 
