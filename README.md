@@ -213,7 +213,8 @@ python wbcleaner.py dism cleanup                      # 标准清理
 python wbcleaner.py dism resetbase                    # 深度清理（不可逆）
 
 python tests/selftest.py                              # 72 项自检
-python tests/uitest.py                                # 64 项界面服务集成测试（只读 + 演练）
+python tests/uitest.py                                # 93 项界面服务集成测试（只读 + 演练）
+node tests/fronttest.js                               # 27 项前端渲染逻辑测试（可单独跑）
 ```
 
 ### 常用参数
@@ -258,7 +259,8 @@ wb-cleaner/
 │   └── make_shortcut.py  # 可选：在桌面建带图标的快捷方式
 ├── tests/
 │   ├── selftest.py       # 72 项：规则 / 守卫 / 隔离还原闭环 / 格式串 / 默认勾选策略
-│   └── uitest.py         # 64 项：token 校验 / 各 API / SSE / dry-run / 前端静态一致性
+│   ├── uitest.py         # 93 项：token 校验 / 各 API / SSE / dry-run / 前端静态一致性
+│   └── fronttest.js      # 27 项：在 Node 里跑真实 app.js，逐个视图验证渲染结果
 ├── reports/              # 生成的扫描报告
 ├── logs/                 # 操作日志
 ├── ui.bat                # 可视化界面（推荐）
@@ -295,7 +297,12 @@ _r("my-rule", "workbuddy", "我的清理项", "contents",
 
 改完跑 `python tests/selftest.py`（72 项，含「可删路径与保护名单无重叠」
 「非安全级不得默认勾选」「本机专属路径不得硬编码」等护栏），
-再跑 `python tests/uitest.py`（64 项，含界面服务与前端静态一致性检查）。
+再跑 `python tests/uitest.py`（93 项，含界面服务、前端静态一致性、
+以及在 Node 里跑真实 `app.js` 的渲染逻辑测试）。
+
+加界面视图时特别注意：分组视图统一由 `web/app.js` 的 `GROUP_VIEWS` 驱动
+（`VIEWS` 从它展开，`renderAll()` 用它判断），**不要另外散写一份分组列表**——
+之前就是散写的，加了视图漏改渲染分支，点击后界面毫无反应。
 新增动作记得在 `wbc/syswin.py` 的 `ACTIONS` 里注册，两个测试都会检查完整性。
 
 ## 界面 API（想自己接别的前端可以用）

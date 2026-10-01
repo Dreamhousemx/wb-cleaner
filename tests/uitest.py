@@ -12,6 +12,8 @@
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -34,6 +36,26 @@ def check(name, cond, detail=""):
     (PASS if cond else FAIL).append(name)
     print("  %s %s  %s" % ("\033[32mPASS\033[0m" if cond else "\033[31mFAIL\033[0m",
                            name, detail if not cond else ""))
+
+
+def find_node():
+    """找一个能真正执行 JS 的 node（优先托管版本）。"""
+    candidates = [
+        os.path.join(os.path.expanduser("~"), ".workbuddy", "binaries", "node",
+                     "versions", "22.22.2-5", "node.exe"),
+        shutil.which("node") or "",
+        r"C:\Program Files\nodejs\node.exe",
+    ]
+    for exe in candidates:
+        if exe and os.path.isfile(exe):
+            try:
+                r = subprocess.run([exe, "-e", "console.log(1)"],
+                                   capture_output=True, timeout=30)
+                if r.returncode == 0 and r.stdout.strip() == b"1":
+                    return exe
+            except (OSError, subprocess.SubprocessError):
+                continue
+    return None
 
 
 def url(path, token=TOKEN):
@@ -97,6 +119,13 @@ def main():
             st, body = get("/static/%s" % name)
             check("静态文件 %s 可访问" % name, st == 200 and must in body,
                   "status=%s len=%d" % (st, len(body)))
+
+        req = urllib.request.Request(url("/static/app.css"), method="HEAD")
+        with urllib.request.urlopen(req, timeout=10) as r:
+            head_body = r.read()
+            check("HEAD 请求可用且不带响应体",
+                  r.status == 200 and head_body == b"",
+                  "status=%s len=%d" % (r.status, len(head_body)))
 
         st, icon = get_bytes("/static/app-icon.png")
         check("应用图标可访问", st == 200 and icon[:4] == b"\x89PNG" and len(icon) > 5000,
@@ -338,7 +367,12 @@ def main():
               "http://" not in html_src and "https://" not in html_src,
               "含外部链接")
         check("界面有 DeepSeek 入口", 'data-view="deepseek"' in html_src)
-        check("前端视图表含 deepseek", "'deepseek'" in js_src)
+        # 分组视图必须由 GROUP_VIEWS 统一驱动，别再散写多份列表
+        # （曾经就是散写的：加了视图漏改 renderAll 的分支，点了没反应）
+        check("分组视图由 GROUP_VIEWS 统一驱动",
+              "GROUP_VIEWS.includes(S.view)" in js_src
+              and "const VIEWS = ['overview', ...GROUP_VIEWS" in js_src,
+              "renderAll/VIEWS 未使用 GROUP_VIEWS")
         check("界面区分「需手动勾选」风险项",
               "tag-manual" in js_src and "li-impact" in js_src)
         check("CSS 定义了风险提示样式",
@@ -347,8 +381,35 @@ def main():
               "onclick=" not in html_src.lower(),
               "index.html 里出现了 onclick")
 
-        # ---------------- 12 未知路径
-        print("\n[12] 其它")
+        # ---------------- 12 前端渲染逻辑（真跑 app.js）
+        print("\n[12] 前端渲染逻辑（用 Node 跑真实 app.js）")
+        node = find_node()
+        if not node:
+            print("     未找到 node，跳过（仅影响这一节）")
+        else:
+            fixture = os.path.join(ROOT, ".cache", "_front_fixture.json")
+            os.makedirs(os.path.dirname(fixture), exist_ok=True)
+            with open(fixture, "w", encoding="utf-8", newline="\n") as fh:
+                json.dump(groups, fh, ensure_ascii=False)
+            script = os.path.join(ROOT, "tests", "fronttest.js")
+            proc = subprocess.run([node, script, fixture],
+                                  capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=120)
+            out = (proc.stdout or "") + (proc.stderr or "")
+            for line in out.splitlines():
+                if line.strip().startswith("PASS "):
+                    check(line.strip()[5:].strip(), True)
+                elif line.strip().startswith("FAIL "):
+                    check(line.strip()[5:].strip(), False)
+            check("前端渲染测试整体通过", proc.returncode == 0,
+                  "退出码 %s" % proc.returncode)
+            try:
+                os.remove(fixture)
+            except OSError:
+                pass
+
+        # ---------------- 13 未知路径
+        print("\n[13] 其它")
         try:
             get("/api/nope")
             check("未知 API 返回 404", False)

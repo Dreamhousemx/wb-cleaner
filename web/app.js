@@ -145,7 +145,7 @@ function renderTitlebar() {
 }
 
 function renderActionbar() {
-  const show = ['overview', 'workbuddy', 'codex', 'deepseek', 'system'].includes(S.view);
+  const show = ['overview', ...GROUP_VIEWS].includes(S.view);
   $('actionbar').classList.toggle('hide', !show);
   if (!show) return;
 
@@ -474,23 +474,31 @@ function renderAll() {
   renderTitlebar();
   renderActionbar();
   const c = $('content');
-  switch (S.view) {
-    case 'overview': c.innerHTML = viewOverview(); bindOverview(); break;
-    case 'workbuddy':
-    case 'codex':
-    case 'system': c.innerHTML = viewGroup(S.view); bindGroup(); break;
-    case 'winsxs': c.innerHTML = viewWinsxs(); bindWinsxs(); break;
-    case 'trash': c.innerHTML = viewTrash(); bindTrash(); break;
-    case 'protected': c.innerHTML = viewProtected(); break;
-    default: c.innerHTML = viewOverview();
+  // 分组视图统一由 GROUP_VIEWS 驱动：新增软件分组只要改这一处，
+  // 不会再出现「加了视图却忘了在某个 switch 里补分支」的漏项。
+  if (GROUP_VIEWS.includes(S.view)) {
+    c.innerHTML = viewGroup(S.view);
+    bindGroup();
+  } else if (S.view === 'winsxs') {
+    c.innerHTML = viewWinsxs();
+    bindWinsxs();
+  } else if (S.view === 'trash') {
+    c.innerHTML = viewTrash();
+    bindTrash();
+  } else if (S.view === 'protected') {
+    c.innerHTML = viewProtected();
+  } else {
+    c.innerHTML = viewOverview();
+    bindOverview();
   }
   if (location.hash.slice(1) !== S.view) {
     history.replaceState(null, '', `#${S.view}`);
   }
 }
 
-const VIEWS = ['overview', 'workbuddy', 'codex', 'deepseek', 'system',
-               'winsxs', 'trash', 'protected'];
+// 分组视图清单：软件分组（workbuddy / codex / deepseek）与系统分组共用 viewGroup
+const GROUP_VIEWS = ['workbuddy', 'codex', 'deepseek', 'system'];
+const VIEWS = ['overview', ...GROUP_VIEWS, 'winsxs', 'trash', 'protected'];
 
 function goto(view) {
   if (!VIEWS.includes(view)) view = 'overview';
@@ -545,7 +553,7 @@ function groupKeep(group) {
 
 function viewOverview() {
   if (!Object.keys(S.groups).length) return emptyState();
-  const rows = ['workbuddy', 'codex', 'deepseek', 'system'].map((k) => {
+  const rows = GROUP_VIEWS.map((k) => {
     const g = S.groups[k];
     if (!g) return '';
     const picked = g.items.filter((i) => S.sel.has(i.rid) && i.actionable);

@@ -321,6 +321,19 @@ class Handler(BaseHTTPRequestHandler):
         tok = query.get("t", [None])[0] or self.headers.get("X-WBC-Token")
         return tok == TOKEN
 
+    def _write_body(self, data):
+        """HEAD 请求只回响应头，不写响应体。"""
+        if not getattr(self, "_head_only", False):
+            self.wfile.write(data)
+
+    def do_HEAD(self):
+        """HEAD 走和 GET 完全一样的路由，只是不发响应体。"""
+        self._head_only = True
+        try:
+            self.do_GET()
+        finally:
+            self._head_only = False
+
     def _json(self, obj, code=200):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
@@ -328,7 +341,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
-        self.wfile.write(body)
+        self._write_body(body)
 
     def _text(self, text, code=200, ctype="text/plain; charset=utf-8"):
         body = text.encode("utf-8")
@@ -336,7 +349,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        self._write_body(body)
 
     def _body_json(self):
         try:
@@ -504,7 +517,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
-        self.wfile.write(data)
+        self._write_body(data)
 
     def _report_file(self, name):
         """只允许 reports 目录下的单层文件名，防止路径穿越。"""
@@ -522,7 +535,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
-        self.wfile.write(data)
+        self._write_body(data)
 
     def _sse(self, job):
         self.send_response(200)
