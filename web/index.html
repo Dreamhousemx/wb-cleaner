@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>扫尘 — WorkBuddy / Codex / C盘 清理</title>
+<link rel="icon" type="image/png" href="/static/app-icon.png">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- ============================ 标题栏 ============================ -->
+  <header class="titlebar">
+    <div class="brand">
+      <div class="logo"><img src="/static/app-icon.png" alt="扫尘"></div>
+      <div class="brand-text">
+        <div class="brand-name">扫尘</div>
+        <div class="brand-sub">Sweep · 清缓存 · 腾空间</div>
+      </div>
+    </div>
+
+    <div class="titlebar-center">
+      <div class="disk">
+        <div class="disk-row">
+          <span class="disk-label">C 盘</span>
+          <span class="disk-value" id="diskText">读取中…</span>
+        </div>
+        <div class="disk-bar"><div class="disk-fill" id="diskFill" style="width:0%"></div></div>
+      </div>
+      <div class="scan-progress" id="scanProgress">
+        <div class="sp-bar"><div class="sp-fill" id="spFill" style="width:0%"></div></div>
+        <div class="sp-text" id="spText"></div>
+      </div>
+    </div>
+
+    <div class="titlebar-actions">
+      <span class="pill" id="adminPill" title="管理员权限状态">权限检测中</span>
+      <button class="btn btn-ghost" id="btnDoctor" title="查看环境与规则概况">环境</button>
+      <button class="btn btn-ghost" id="btnReport" title="导出本次扫描的 HTML 报告">导出报告</button>
+      <button class="btn btn-primary" id="btnScan">扫描</button>
+    </div>
+  </header>
+
+  <!-- ============================ 主体 ============================ -->
+  <div class="body">
+
+    <aside class="sidebar">
+      <nav class="nav" id="nav">
+        <button class="nav-item" data-view="overview">
+          <span class="ni-ico">▦</span><span class="ni-label">概览</span>
+        </button>
+        <button class="nav-item" data-view="workbuddy">
+          <span class="ni-ico">◆</span><span class="ni-label">WorkBuddy</span>
+          <span class="ni-size" data-size="workbuddy"></span>
+        </button>
+        <button class="nav-item" data-view="codex">
+          <span class="ni-ico">◇</span><span class="ni-label">Codex</span>
+          <span class="ni-size" data-size="codex"></span>
+        </button>
+        <button class="nav-item" data-view="system">
+          <span class="ni-ico">▣</span><span class="ni-label">C 盘系统</span>
+          <span class="ni-size" data-size="system"></span>
+        </button>
+        <div class="nav-sep"></div>
+        <button class="nav-item" data-view="winsxs">
+          <span class="ni-ico">⚙</span><span class="ni-label">WinSxS 组件</span>
+        </button>
+        <button class="nav-item" data-view="trash">
+          <span class="ni-ico">↺</span><span class="ni-label">隔离区</span>
+          <span class="ni-size" id="trashNavSize"></span>
+        </button>
+        <button class="nav-item" data-view="protected">
+          <span class="ni-ico">⛨</span><span class="ni-label">保护名单</span>
+        </button>
+      </nav>
+
+      <div class="side-foot">
+        <label class="field">
+          <span class="field-label">只清理多少天前的数据</span>
+          <select id="daysSelect">
+            <option value="">不限（按规则默认）</option>
+            <option value="1">1 天前</option>
+            <option value="3">3 天前</option>
+            <option value="7">7 天前</option>
+            <option value="14">14 天前</option>
+            <option value="30">30 天前</option>
+          </select>
+        </label>
+        <label class="switch">
+          <input type="checkbox" id="permSwitch">
+          <span class="switch-box"></span>
+          <span class="switch-text">
+            <b>永久删除</b>
+            <em>默认关闭：清理项先移入隔离区，可一键还原</em>
+          </span>
+        </label>
+      </div>
+    </aside>
+
+    <main class="content" id="content"></main>
+  </div>
+
+  <!-- ============================ 底部操作栏 ============================ -->
+  <footer class="actionbar" id="actionbar">
+    <div class="ab-left">
+      <div class="ab-summary">
+        <span class="ab-count" id="selCount">已选 0 项</span>
+        <span class="ab-total" id="selTotal">0 B</span>
+      </div>
+      <div class="ab-mode" id="modeChip">隔离区（可还原）</div>
+    </div>
+    <div class="ab-mid">
+      <button class="btn btn-ghost" id="btnDefault">恢复推荐勾选</button>
+      <button class="btn btn-ghost" id="btnSelectSafe">只选安全项</button>
+      <button class="btn btn-ghost" id="btnSelectAll">全选</button>
+      <button class="btn btn-ghost" id="btnClear">清空</button>
+    </div>
+    <div class="ab-right">
+      <button class="btn btn-outline" id="btnPreview">预览</button>
+      <button class="btn btn-primary" id="btnRun">执行清理</button>
+    </div>
+  </footer>
+
+</div>
+
+<!-- ============================ 日志抽屉 ============================ -->
+<div class="drawer" id="drawer">
+  <div class="drawer-head">
+    <div class="drawer-title" id="drawerTitle">执行日志</div>
+    <div class="drawer-actions">
+      <button class="btn btn-ghost btn-sm" id="btnDrawerClear">清空</button>
+      <button class="btn btn-ghost btn-sm" id="btnDrawerClose">收起</button>
+    </div>
+  </div>
+  <div class="drawer-body" id="drawerBody"></div>
+</div>
+
+<!-- ============================ 弹窗 ============================ -->
+<div class="modal-mask" id="modalMask">
+  <div class="modal" id="modal">
+    <div class="modal-head">
+      <h3 id="modalTitle">确认</h3>
+      <button class="modal-x" id="modalX">×</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-foot" id="modalFoot"></div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

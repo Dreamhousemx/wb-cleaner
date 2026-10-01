@@ -1,0 +1,20 @@
+# 批处理必须 CRLF（cmd.exe 解析 LF 结尾的 .bat 不可靠）。
+# 用 -text 完全关掉行尾转换：无论 clone、下载 zip 还是看 raw，拿到的都是 CRLF 原样字节。
+*.bat -text
+*.cmd -text
+
+# 脚本与文本统一 LF
+*.py  text eol=lf
+*.js  text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.md  text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.gitignore text eol=lf
+
+# 二进制，别动
+*.png binary
+*.ico binary
+*.jpg binary
+*.gif binary
