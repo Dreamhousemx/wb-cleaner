@@ -145,7 +145,7 @@ function renderTitlebar() {
 }
 
 function renderActionbar() {
-  const show = ['overview', 'workbuddy', 'codex', 'system'].includes(S.view);
+  const show = ['overview', 'workbuddy', 'codex', 'deepseek', 'system'].includes(S.view);
   $('actionbar').classList.toggle('hide', !show);
   if (!show) return;
 
@@ -270,9 +270,14 @@ function openRunDialog(simulate) {
   const hasDanger = picked.some((it) => it.level === 'danger');
   const word = S.permanent ? 'DELETE' : 'CLEAN';
 
+  const risky = picked.filter((it) => it.level === 'caution' || it.level === 'danger');
   const rows = picked.map((it) => `
     <div class="li">
-      <div class="li-main"><div class="li-title"><span class="t">${esc(it.title)}</span></div></div>
+      <div class="li-main">
+        <div class="li-title"><span class="t">${esc(it.title)}</span></div>
+        ${it.impact && it.level !== 'safe'
+          ? `<div class="li-impact">⚠ ${esc(it.impact)}</div>` : ''}
+      </div>
       <span class="badge ${it.level}">${esc(it.levelLabel)}</span>
       <div class="li-size">${esc(it.sizeHuman)}</div>
     </div>`).join('');
@@ -288,6 +293,11 @@ function openRunDialog(simulate) {
       </div>
     </div>
     <div class="mlist" style="max-height:260px;overflow:auto">${rows}</div>
+    ${risky.length && !simulate ? `<div class="warn-box ${hasDanger ? 'danger' : ''}">
+      ⚠ 选中的项目里有 <b>${risky.length}</b> 项属于「需注意 / 高风险」——这些是<b>默认不勾选</b>的，
+      请你确认下面的影响后再继续：<br>
+      ${risky.map((it) => `· <b>${esc(it.title)}</b>：${esc(it.impact || '')}`).join('<br>')}
+    </div>` : ''}
     ${hasDanger && !simulate ? `<div class="warn-box danger">⚠ 选中项里包含<b>高风险</b>内容，请确认影响已了解。</div>` : ''}
     ${simulate && sysActions.length ? `<div class="warn-box">包含 ${sysActions.length} 个系统动作，实际执行时会再单独确认。</div>` : ''}
     ${!simulate && needAdmin && S.env && !S.env.admin
@@ -479,7 +489,8 @@ function renderAll() {
   }
 }
 
-const VIEWS = ['overview', 'workbuddy', 'codex', 'system', 'winsxs', 'trash', 'protected'];
+const VIEWS = ['overview', 'workbuddy', 'codex', 'deepseek', 'system',
+               'winsxs', 'trash', 'protected'];
 
 function goto(view) {
   if (!VIEWS.includes(view)) view = 'overview';
@@ -534,15 +545,17 @@ function groupKeep(group) {
 
 function viewOverview() {
   if (!Object.keys(S.groups).length) return emptyState();
-  const rows = ['workbuddy', 'codex', 'system'].map((k) => {
+  const rows = ['workbuddy', 'codex', 'deepseek', 'system'].map((k) => {
     const g = S.groups[k];
     if (!g) return '';
     const picked = g.items.filter((i) => S.sel.has(i.rid) && i.actionable);
+    const manual = g.items.filter((i) => i.actionable && !i.defaultOn && !i.protected);
     return `
       <tr>
-        <td><b>${esc(g.title)}</b></td>
+        <td><b>${esc(g.title.replace(/^\d+\.\s*/, ''))}</b></td>
         <td class="num">${esc(g.totalHuman)}</td>
-        <td>${g.items.filter((i) => i.actionable).length} 项可清理</td>
+        <td>${g.items.filter((i) => i.actionable).length} 项可清理${
+          manual.length ? ` · <span style="color:var(--caution)">${manual.length} 项需手动勾选</span>` : ''}</td>
         <td class="num">${picked.length} 项 / ${human(picked.reduce((a, i) => a + i.size, 0))}</td>
         <td class="row-actions">
           <button class="btn btn-outline btn-sm" data-goto="${k}">查看</button>
@@ -609,6 +622,8 @@ function viewGroup(key) {
   const tips = {
     workbuddy: 'WorkBuddy 的日志、性能 trace、Electron 缓存与会话改动备份。运行时、凭证、记忆都在保护名单里，永远不会被清理。',
     codex: 'Codex 的临时目录、插件与市场缓存、日志数据库。codex.exe 等宿主程序在保护名单里。',
+    deepseek: 'DeepSeek Harness 的更新器残留、桌面端渲染缓存、会话回收站与市场缓存。'
+            + '内置运行时（Node/Python）与凭证在保护名单里，插件 node_modules 需手动勾选。',
     system: 'C 盘系统级垃圾。WinSxS 必须走 DISM，本工具已内置；休眠文件与「永久删除」一样需要二次确认。',
   }[key];
 
@@ -648,6 +663,9 @@ function itemRow(it) {
   const selectable = it.actionable || it.kind === 'action';
   const dis = !selectable || it.protected;
   const open = S.expanded.has(it.rid);
+  // 默认不勾选、需要用户自己决定的项目：直接在行上标出来，不靠展开才发现
+  const manual = selectable && !it.defaultOn && !it.protected;
+  const risky = manual && (it.level === 'caution' || it.level === 'danger');
   const title = `${esc(it.title)}${it.minAgeDays ? `<span class="hint"> · 仅 ${it.minAgeDays} 天前</span>` : ''}`;
   const sizeCls = it.size ? '' : 'zero';
   const sizeTxt = it.size ? esc(it.sizeHuman) : (it.note ? esc(it.note) : '—');
@@ -658,8 +676,10 @@ function itemRow(it) {
       <span class="cb ${on ? 'on' : ''} ${dis ? 'dis' : ''}"></span>
       <div class="li-main">
         <div class="li-title"><span class="t">${title}</span>
+          ${manual ? '<span class="tag-manual">需手动勾选</span>' : ''}
           ${it.requiresAdmin ? '<span class="hint">· 需管理员</span>' : ''}</div>
         <div class="li-desc">${esc(it.kind === 'action' && it.note ? '' : it.desc)}</div>
+        ${risky && it.impact ? `<div class="li-impact">⚠ ${esc(it.impact)}</div>` : ''}
       </div>
       <span class="badge ${it.level}">${esc(it.levelLabel)}</span>
       <div class="li-size ${sizeCls}">${sizeTxt}${sub}</div>

@@ -48,7 +48,18 @@ class ScanItem:
 
 
 def scan_rule(rule, days_override=None, master_cutoff=None):
-    days = rule.min_age_days if days_override is None else days_override
+    """扫描单条规则。
+
+    days_override 是「全局年龄下限」，语义是**只收紧、不放松**：
+    取 规则自身阈值 与 全局值 的较大者。规则里的 min_age_days 表达的是
+    「这份数据要放这么久才敢删」（比如日志要等 2 天避开正在跑的会话），
+    全局设置不应该把它调小——否则用户一个参数就把安全边界抹掉了。
+    全局值填 0/None 表示按各规则自己的阈值。
+    """
+    if days_override:
+        days = max(rule.min_age_days, days_override)
+    else:
+        days = rule.min_age_days
     cutoff = (master_cutoff - days * 86400) if master_cutoff else (time.time() - days * 86400)
     item = ScanItem(rule=rule)
 
@@ -239,7 +250,7 @@ def save_dism_cache(payload):
     payload["time"] = time.time()
     payload["time_human"] = time.strftime("%Y-%m-%d %H:%M", time.localtime(payload["time"]))
     try:
-        with open(DISM_CACHE, "w", encoding="utf-8") as fh:
+        with open(DISM_CACHE, "w", encoding="utf-8", newline="\n") as fh:
             json.dump(payload, fh, ensure_ascii=False, indent=2)
     except OSError:
         pass
@@ -267,7 +278,8 @@ def scan_group(group, days_override=None, include_protected=True, progress=None)
     return items
 
 
-def scan_all(groups=("workbuddy", "codex", "system"), days_override=None, progress=None):
+def scan_all(groups=("workbuddy", "codex", "deepseek", "system"), days_override=None,
+             progress=None):
     return {g: scan_group(g, days_override=days_override, progress=progress) for g in groups}
 
 

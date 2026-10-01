@@ -266,7 +266,8 @@ def flush_manifest(quarantine, result, logger=None):
         "entries": entries,
     }
     try:
-        with open(os.path.join(quarantine, "manifest.json"), "w", encoding="utf-8") as fh:
+        with open(os.path.join(quarantine, "manifest.json"), "w", encoding="utf-8",
+                  newline="\n") as fh:
             json.dump(payload, fh, ensure_ascii=False, indent=2)
     except OSError as exc:
         if logger:

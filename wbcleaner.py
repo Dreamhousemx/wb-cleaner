@@ -103,8 +103,8 @@ def cell(text, width=0, color="", align="left"):
 
 def print_scan_table(items, selection=None, days=None):
     print("  " + C_.BOLD + cell("#", 3) + cell("项目", 34) + cell("等级", 6)
-          + cell("体积", 10, align="right") + cell(" 默认", 5) + "状态" + C_.RESET)
-    print("  " + C_.GRAY + "─" * 78 + C_.RESET)
+          + cell("体积", 10, align="right") + cell(" 勾选", 7) + "状态" + C_.RESET)
+    print("  " + C_.GRAY + "─" * 80 + C_.RESET)
     for idx, it in enumerate(items, 1):
         lv = it.rule.level
         color = level_color(lv)
@@ -121,15 +121,42 @@ def print_scan_table(items, selection=None, days=None):
         else:
             status, scolor = it.note or "无内容", C_.GRAY
 
+        # 默认勾选策略：只有 safe 级才默认勾选，其余一律"手动"
+        if it.rule.protected or it.rule.kind == "report":
+            dflt, dcolor = "—", C_.GRAY
+        elif it.rule.default_on:
+            dflt, dcolor = "✓", C_.GREEN
+        elif it.actionable or it.rule.kind == "action":
+            dflt, dcolor = "手动", C_.YELLOW
+        else:
+            dflt, dcolor = "—", C_.GRAY
+
         print("  " + cell(str(idx), 3)
               + cell(mark + " " + title, 34, color)
               + cell(it.rule.level_label, 6, color)
               + cell(human(it.size) if has_size else "-", 10, "" if has_size else C_.GRAY,
                      align="right")
-              + cell(" ✓" if it.rule.default_on else " —", 5,
-                     C_.GREEN if it.rule.default_on else C_.GRAY)
+              + cell(" " + dflt, 7, dcolor)
               + cell(status, 0, scolor))
-    print("  " + C_.GRAY + "─" * 78 + C_.RESET)
+    print("  " + C_.GRAY + "─" * 80 + C_.RESET)
+
+
+def print_manual_hints(items, width=76):
+    """列出「默认不勾选、需要用户手动决定」的项目及其影响——这是安全边界的一部分。"""
+    manual = [i for i in items
+              if not i.rule.default_on and i.actionable
+              and not i.rule.protected and i.rule.kind != "report"]
+    if not manual:
+        return
+    print("\n  %s以下 %d 项默认不勾选，需要你确认影响后手动选择：%s" % (
+        C_.YELLOW, len(manual), C_.RESET))
+    for it in manual:
+        color = level_color(it.rule.level)
+        print("  %s· [%s] %s%s%s  %s%s%s" % (
+            color, it.rule.level_label, C_.BOLD, it.rule.title, C_.RESET,
+            C_.GRAY, human(it.size), C_.RESET))
+        if it.rule.impact:
+            print("    %s影响：%s%s" % (color, it.rule.impact, C_.RESET))
 
 
 def print_totals(items, selection):
@@ -165,6 +192,9 @@ def interactive_confirm(items, selection, permanent, days):
         print("  %s•%s %s%-32s%s %s%10s%s" % (
             color, C_.RESET, C_.BOLD, it.rule.title, C_.RESET,
             color, human(it.size), C_.RESET))
+        # 非安全项必须把影响摆在眼前，别让人凭感觉点确认
+        if it.rule.level in ("caution", "danger") and it.rule.impact:
+            print("    %s⚠ %s%s" % (color, it.rule.impact, C_.RESET))
     tot, safe, caution, danger = scanner.totals(todo)
     mode = C_.RED + "永久删除（不可恢复）" + C_.RESET if permanent else \
         C_.GREEN + "移入隔离区（可还原）" + C_.RESET
@@ -181,7 +211,7 @@ def interactive_confirm(items, selection, permanent, days):
 
 def do_scan(args):
     logger = make_logger(verbose=getattr(args, "verbose", False))
-    groups = [args.group] if getattr(args, "group", None) else ["workbuddy", "codex", "system"]
+    groups = [args.group] if getattr(args, "group", None) else ["workbuddy", "codex", "deepseek", "system"]
     days = getattr(args, "days", None)
     print_header("扫描中，请稍候（只读操作，不会修改任何文件）...")
 
@@ -208,10 +238,11 @@ def do_scan(args):
         tot, safe, caution, danger = scanner.totals(items)
         print("  可回收 %s%s%s ｜ 安全 %s ｜ 注意 %s ｜ 危险 %s" % (
             C_.BOLD, human(tot), C_.RESET, human(safe), human(caution), human(danger)))
+        print_manual_hints(items)
         protected = [i for i in items if not i.actionable and i.rule.kind == "report"]
         if protected:
             keep = sum(i.size for i in protected)
-            print("  %s另有保护项 %d 项、合计 %s（运行时/凭证/数据库，永不清理）%s" % (
+            print("\n  %s另有保护项 %d 项、合计 %s（运行时/凭证/数据库，永不清理）%s" % (
                 C_.GRAY, len(protected), human(keep), C_.RESET))
 
     grand, safe, _, _ = scanner.totals([i for items in scan.values() for i in items])
@@ -251,7 +282,7 @@ def select_by_spec(items, spec):
 def do_clean(args):
     dry_run = getattr(args, "dry_run", False)
     logger = make_logger(verbose=getattr(args, "verbose", False) or dry_run)
-    groups = [args.group] if getattr(args, "group", None) else ["workbuddy", "codex", "system"]
+    groups = [args.group] if getattr(args, "group", None) else ["workbuddy", "codex", "deepseek", "system"]
     days = getattr(args, "days", None)
     permanent = getattr(args, "permanent", False)
 
@@ -379,19 +410,24 @@ def do_doctor(args):
         ("规则数", len(R.ALL_RULES), "%d 条规则 / %d 条保护名单" % (
             len([r for r in R.ALL_RULES if not r.protected]), len(R.PROTECTED))),
     ]
-    for i in ("workbuddy", "codex"):
-        pass
     for name, ok, detail in checks:
         print("  %s%s%s %-16s %s" % (C_.GREEN if ok else C_.RED, "✓" if ok else "✗",
                                      C_.RESET, name, detail))
 
+    viol = R.default_on_violations()
+    print("\n  默认勾选策略：%s" % (
+        C_.GREEN + "仅 safe 级默认勾选 ✓" + C_.RESET if not viol
+        else C_.RED + "有 %d 条非安全项被默认勾选 ✗" % len(viol) + C_.RESET))
+
     print("\n  清理目标可用性：")
-    for group in ("workbuddy", "codex", "system"):
+    for group in ("workbuddy", "codex", "deepseek", "system"):
         items = scanner.scan_group(group)
         avail = sum(1 for i in items if i.actionable)
         tot = sum(i.size for i in items if i.actionable)
-        print("    %-10s %2d/%2d 项有内容，可回收 %s" % (
-            R.GROUP_TITLES[group][:3], avail, len(items), human(tot)))
+        manual = [i for i in items if i.actionable and not i.rule.default_on]
+        print("    %-22s %2d/%2d 项有内容，可回收 %s%s" % (
+            R.GROUP_TITLES[group], avail, len(items), human(tot),
+            C_.GRAY + "（其中 %d 项需手动勾选）%s" % (len(manual), C_.RESET) if manual else ""))
     free, total = util.free_space(r"C:\\")
     print("\n  C 盘：可用 %s / 总计 %s" % (human(free), human(total)))
     tr = executor.list_trash()
@@ -407,12 +443,16 @@ def do_doctor(args):
 MENU = """
   {b}[1]{r} 清理 WorkBuddy 文件            {g}(日志 / trace / 缓存 / 会话备份)
   {b}[2]{r} 清理 Codex 文件                {g}(临时目录 / 插件与市场缓存 / 日志库)
-  {b}[3]{r} 清理 C 盘无用文件              {g}(WinSxS / 更新缓存 / 临时文件 / 包缓存)
-  {b}[4]{r} 一次扫描全部并生成 HTML 报告
-  {b}[5]{r} 隔离区管理（还原 / 永久删除）
-  {b}[6]{r} WinSxS 组件存储（DISM 分析 / 清理）
-  {b}[7]{r} 环境自检
+  {b}[3]{r} 清理 DeepSeek Harness 文件     {g}(更新器残留 / 桌面缓存 / 会话回收站)
+  {b}[4]{r} 清理 C 盘无用文件              {g}(WinSxS / 更新缓存 / 临时文件 / 包缓存)
+  {b}[5]{r} 一次扫描全部并生成 HTML 报告
+  {b}[6]{r} 隔离区管理（还原 / 永久删除）
+  {b}[7]{r} WinSxS 组件存储（DISM 分析 / 清理）
+  {b}[8]{r} 环境自检
   {b}[0]{r} 退出
+
+  {g}默认只勾选「安全」级项目（删了不影响软件使用）；「注意 / 高风险」默认不勾，
+  展开对应条目可看具体影响说明，需要时手动勾选。{r}
 """
 
 
@@ -442,15 +482,17 @@ def menu_loop(args):
             elif choice == "2":
                 group_flow("codex", days, permanent, logger)
             elif choice == "3":
-                group_flow("system", days, permanent, logger)
+                group_flow("deepseek", days, permanent, logger)
             elif choice == "4":
+                group_flow("system", days, permanent, logger)
+            elif choice == "5":
                 out = os.path.join(APP_DIR, "reports",
                                    "scan-%s.html" % time.strftime("%Y%m%d-%H%M%S"))
                 do_scan(argparse.Namespace(group=None, days=days, json=out.replace(".html", ".json"),
                                            html=out, verbose=verbose))
                 print("\n  报告已生成：%s%s%s" % (C_.CYAN, out, C_.RESET))
                 input("  回车返回主菜单 > ")
-            elif choice == "5":
+            elif choice == "6":
                 do_trash(argparse.Namespace(trash_action="list", ts=None, dry_run=False))
                 ans = input("\n  r=还原  p=永久删除 其它=返回 > ").strip().lower()
                 entries = executor.list_trash()
@@ -463,9 +505,9 @@ def menu_loop(args):
                     if input("  永久删除不可恢复，输入 PURGE 确认 > ").strip() == "PURGE":
                         executor.purge_trash(ts or None, logger=logger)
                     input("  回车继续 > ")
-            elif choice == "6":
-                dism_menu(logger)
             elif choice == "7":
+                dism_menu(logger)
+            elif choice == "8":
                 do_doctor(args)
                 input("  回车返回主菜单 > ")
             else:
@@ -492,6 +534,7 @@ def group_flow(group, days, permanent, logger):
         print_scan_table(items, selection)
         selected_items = [i for i in items if i.rid in selection]
         print_totals(items, selection)
+        print_manual_hints(items)
 
         print("\n  {b}编号{r}=切换选中  {b}a{r}=全选  {b}s{r}=仅安全项  {b}d{r}=默认  {b}n{r}=全不选  "
               "{b}t{r}=改年龄阈值  {b}m{r}=切换删除模式  {b}p{r}=预览".format(
@@ -513,8 +556,7 @@ def group_flow(group, days, permanent, logger):
         elif cmd == "r":
             force_rescan = True
         elif cmd == "t":
-            raw = input("  只清理 N 天前的数据（当前 %s，回车不改）> " %
-                        (days if days else "不限")).strip()
+            raw = input("  全局年龄下限：只清理 N 天前的数据（当前 %s，回车不改）\n    （只会收紧，不会放松单条规则自己的阈值）> " % (days if days else "按规则默认")).strip()
             if raw.isdigit():
                 days = int(raw)
                 force_rescan = True
@@ -643,17 +685,19 @@ def build_parser():
     sub = p.add_subparsers(dest="cmd")
 
     s = sub.add_parser("scan", help="只扫描并报告（只读）")
-    s.add_argument("--group", choices=["workbuddy", "codex", "system"])
-    s.add_argument("--days", type=int, help="只统计 N 天前的数据")
+    s.add_argument("--group", choices=["workbuddy", "codex", "deepseek", "system"])
+    s.add_argument("--days", type=int,
+                   help="全局年龄下限：只统计 N 天前的数据（只收紧，不放松单条规则阈值）")
     s.add_argument("--json", help="导出 JSON 报告路径")
     s.add_argument("--html", help="导出 HTML 报告路径")
     s.set_defaults(func=do_scan)
 
     c = sub.add_parser("clean", help="执行清理（默认隔离区模式）")
-    c.add_argument("--group", choices=["workbuddy", "codex", "system"])
+    c.add_argument("--group", choices=["workbuddy", "codex", "deepseek", "system"])
     c.add_argument("--only", help="safe | all | default，默认 default")
     c.add_argument("--rids", help="指定规则 id，逗号分隔")
-    c.add_argument("--days", type=int, help="只清理 N 天前的数据")
+    c.add_argument("--days", type=int,
+                   help="全局年龄下限：只清理 N 天前的数据（只收紧，不放松单条规则阈值）")
     c.add_argument("--permanent", action="store_true", help="直接永久删除（不进隔离区）")
     c.add_argument("--dry-run", action="store_true", help="演练，不做任何修改")
     c.add_argument("--yes", action="store_true", help="跳过交互确认")

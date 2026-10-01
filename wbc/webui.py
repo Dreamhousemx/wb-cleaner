@@ -230,7 +230,7 @@ def job_clean(job, rids, permanent, dry_run, days, allow_system):
     logger = JobLogger(job, log_path())
     job.log("info", "模式：%s%s" % ("永久删除" if permanent else "隔离区（可还原）",
                                   "，演练" if dry_run else ""))
-    scan = scanner.scan_all(("workbuddy", "codex", "system"), days_override=days)
+    scan = scanner.scan_all(("workbuddy", "codex", "deepseek", "system"), days_override=days)
     items = [i for g in scan.values() for i in g]
     known = {i.rid for i in items}
     unknown = [r for r in rids if r not in known and r not in R.RULES_BY_ID]
@@ -409,7 +409,7 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             if path == "/api/scan":
-                groups = body.get("groups") or ["workbuddy", "codex", "system"]
+                groups = body.get("groups") or ["workbuddy", "codex", "deepseek", "system"]
                 days = body.get("days")
                 days = int(days) if days not in (None, "", 0) else None
                 job = new_job("scan", "扫描")

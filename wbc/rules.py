@@ -25,6 +25,14 @@ PROGRAMDATA = os.environ.get("ProgramData", r"C:\ProgramData")
 WB = os.path.join(HOME, ".workbuddy")
 CX = os.path.join(HOME, ".codex")
 
+# DeepSeek Harness（桌面端叫 "DeepSeek Harness"，内部代号 dsh）
+# 安装目录本身（如 D:\Dev Tools\DeepSeek Harness）属于程序文件，不在清理范围；
+# 这里只针对用户配置目录下确实由它产生的缓存与残留。
+DSH = os.path.join(HOME, ".dsh")                                   # 主目录：运行时/档案/会话
+DS_KEEP = os.path.join(HOME, ".dws")                               # 身份与日志
+DS_DESKTOP = os.path.join(APPDATA, "@deepseek-ai", "dsh-desktop")  # Electron 桌面端数据
+DS_UPDATER = os.path.join(LOCALAPPDATA, "@deepseek-aidsh-desktop-updater")  # 更新器缓存
+
 # 项目自身位置（用于保护所在工作区的 .workbuddy 记忆目录，不写死绝对路径）
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORKSPACE = os.path.dirname(PROJECT_ROOT)
@@ -32,7 +40,8 @@ WORKSPACE = os.path.dirname(PROJECT_ROOT)
 GROUP_TITLES = {
     "workbuddy": "1. WorkBuddy 文件清理",
     "codex": "2. Codex 文件清理",
-    "system": "3. C 盘无用文件清理（系统级）",
+    "deepseek": "3. DeepSeek Harness 文件清理",
+    "system": "4. C 盘无用文件清理（系统级）",
 }
 
 LEVEL_ORDER = {"danger": 0, "caution": 1, "safe": 2, "keep": 3}
@@ -73,32 +82,22 @@ def _r(*args, **kwargs):
     return Rule(*args, **kwargs)
 
 
-# ==================================================================== 保护名单
-# 任何情况下都不允许清理的位置（既是文档也是运行时判据）
+# ==================================================================== 保护名单（补充项）
+# 这里只放「没有对应规则、但同样必须保护」的路径。
+# 其余保护路径由规则表里 protected=True 的规则自动汇总（见文件末尾 _build_protected）。
 def _user_archives():
     """个人档案目录名带会话 UUID，这里按实际情况枚举，避免写死某一个 UUID。"""
     import glob as _glob
     return sorted(_glob.glob(os.path.join(WB, "user-*")))
 
 
-PROTECTED = [
+PROTECTED_EXTRA = [
     ("工作区记忆目录（.workbuddy/memory）", os.path.join(WORKSPACE, ".workbuddy")),
     ("项目内 .workbuddy", os.path.join(PROJECT_ROOT, ".workbuddy")),
 ] + [
     ("个人档案（SOUL/IDENTITY/USER/MEMORY）", p) for p in _user_archives()
 ] + [
-    ("凭证目录", os.path.join(WB, "credentials")),
-    ("本机连接器配置", os.path.join(WB, "connectors")),
-    ("本地登录态存储", os.path.join(WB, "local_storage")),
-    ("托管运行时（Python/Node/Git）", os.path.join(WB, "binaries")),
-    ("安全威胁库", os.path.join(WB, "security")),
-    ("Codex 授权文件", os.path.join(CX, "auth.json")),
-    ("Codex 配置文件", os.path.join(CX, "config.toml")),
-    ("Codex 宿主程序", os.path.join(CX, "plugins", ".plugin-appserver")),
-    ("Codex 技能目录", os.path.join(CX, "skills")),
-    ("Codex 记忆库", os.path.join(CX, "memories_1.sqlite")),
     ("系统组件存储本体（须走 DISM）", os.path.join(WINDIR, "WinSxS")),
-    ("系统安装缓存（删了卸载/修复会失败）", os.path.join(WINDIR, "Installer")),
 ]
 
 
@@ -316,6 +315,145 @@ CODEX_RULES = [
 ]
 
 
+# ==================================================================== DeepSeek Harness
+# 本机实测（2026-10-01）：~/.dsh 709 MB、更新器缓存 552 MB、桌面端数据 27 MB，
+# 合计约 1.29 GB；安装目录（D:\Dev Tools\DeepSeek Harness，1.2 GB）属程序文件，不清理。
+DEEPSEEK_RULES = [
+    # ---------- 更新器残留（本机最大的一块，552 MB）----------
+    _r("ds-updater-installer", "deepseek", "更新器缓存的安装包", "glob",
+       [os.path.join(DS_UPDATER, "installer.exe"),
+        os.path.join(DS_UPDATER, "current.blockmap")],
+       level="safe", default_on=True,
+       desc="更新器下载并执行过的完整安装包副本（本机 289 MB）+ 差分校验文件。",
+       impact="无。已安装的程序不受影响；只有再次升级或修复安装时需要重新下载约 290 MB。"),
+
+    _r("ds-updater-pending", "deepseek", "待安装的更新包", "contents",
+       [os.path.join(DS_UPDATER, "pending")],
+       level="safe", default_on=True,
+       desc="更新器已下载、等待安装的更新包（本机 276 MB）。"
+            "实测当前躺在里面的是 0.2.0-rc.1，而系统里已装的是 0.2.0-rc.2——"
+            "是上一轮升级留下的旧包。",
+       impact="无。若恰好有更新正在下载，那份会被丢弃并在下次更新时重新下载。"),
+
+    # ---------- 桌面端缓存 ----------
+    _r("ds-electron-cache", "deepseek", "桌面端渲染缓存", "contents",
+       [os.path.join(DS_DESKTOP, "Cache"),
+        os.path.join(DS_DESKTOP, "Code Cache"),
+        os.path.join(DS_DESKTOP, "GPUCache"),
+        os.path.join(DS_DESKTOP, "DawnGraphiteCache"),
+        os.path.join(DS_DESKTOP, "DawnWebGPUCache")],
+       level="safe", default_on=True,
+       desc="Electron/Chromium 的磁盘缓存、GPU 着色器缓存，本机约 26 MB。",
+       impact="无。首次启动界面渲染稍慢，之后自动重建。"),
+
+    _r("ds-dictionaries", "deepseek", "拼写检查词典", "contents",
+       [os.path.join(DS_DESKTOP, "Dictionaries")],
+       level="safe", default_on=True,
+       desc="输入框拼写检查用的词典文件（en-US-10-1.bdic，本机 444 KB）。",
+       impact="无。下次使用拼写检查时自动重新下载。"),
+
+    _r("ds-shared-dict", "deepseek", "共享字典缓存", "contents",
+       [os.path.join(DS_DESKTOP, "Shared Dictionary")],
+       level="safe", default_on=True,
+       desc="Chromium 共享字典（压缩字典）缓存。",
+       impact="无。"),
+
+    # ---------- 主目录下的缓存与回收站 ----------
+    _r("ds-sessions-trash", "deepseek", "已删除会话的回收站", "contents",
+       [os.path.join(DSH, "sessions-trash")],
+       level="safe", default_on=True,
+       desc="在 Harness 里删掉的会话会被移到这里暂存，本机 612 KB。",
+       impact="无。这些会话本就已经被标记删除；清掉后无法再从回收站恢复它们。"),
+
+    _r("ds-projcache", "deepseek", "会话项目缓存", "contents",
+       [os.path.join(DSH, "storages", "session_projcache")],
+       level="safe", default_on=True,
+       desc="会话的项目索引缓存，本机 1.4 MB。",
+       impact="无。打开项目时会重新扫描建立。"),
+
+    _r("ds-market-cache", "deepseek", "插件市场缓存", "glob",
+       [os.path.join(DSH, "profiles", "desktop", ".dsh-market", "discovery-compatibility-v1.json"),
+        os.path.join(DSH, "profiles", "desktop", ".dsh-market", "log.ndjson")],
+       level="safe", default_on=True,
+       desc="插件市场的发现清单缓存与操作日志（73 KB + 9 KB）。",
+       impact="无。打开市场时会重新拉取。"),
+
+    _r("ds-plugin-manager-logs", "deepseek", "插件管理器日志", "contents",
+       [os.path.join(DSH, "profiles", "desktop", ".plugin-manager", "logs")],
+       level="safe", default_on=True,
+       desc="插件管理器的运行日志。",
+       impact="无。"),
+
+    _r("ds-dws-logs", "deepseek", "身份服务日志", "contents",
+       [os.path.join(DS_KEEP, "logs")],
+       level="safe", default_on=True,
+       desc="~/.dws 下的日志目录（本机为空，日志会随使用增长）。",
+       impact="无。"),
+
+    _r("ds-usage-backup", "deepseek", "用量统计的备份副本", "glob",
+       [os.path.join(DSH, ".dsh-usage-ledger.json.bak"),
+        os.path.join(DSH, ".dsh-usage-stats.json.bak")],
+       level="safe", min_age_days=7, default_on=True,
+       desc="用量账本与统计的自动备份文件（各一份，共约 24 KB）。",
+       impact="无。正式文件仍在，备份只是上一版副本。"),
+
+    # ---------- 需要手动确认的 ----------
+    _r("ds-plugin-node-modules", "deepseek", "插件依赖 node_modules", "contents",
+       [os.path.join(DSH, "profiles", "desktop", "node_modules")],
+       level="caution", default_on=False,
+       desc="桌面端插件运行所需的 npm 依赖，本机 415 MB"
+            "（含 sharp 的 libvips、mermaid 等大体积包）。",
+       impact="删除后插件会启动失败，需要重新联网执行 pnpm install 才能恢复"
+              "（依赖网络与镜像速度，可能耗时较久）。默认不勾选。"),
+
+    _r("ds-sessions", "deepseek", "历史会话记录", "subdirs",
+       [os.path.join(DSH, "sessions")],
+       level="caution", min_age_days=30, default_on=False,
+       desc="按项目组织的会话历史（本机仅 3.8 MB）。",
+       impact="失去 30 天前的对话记录与上下文回溯，收益很小，通常不必删。"),
+
+    # ---------- 只展示的保护项 ----------
+    _r("ds-keep-runtime", "deepseek", "内置运行时 dsh-runtimes/", "report",
+       [os.path.join(DSH, "dsh-runtimes")],
+       level="keep", protected=True,
+       desc="Harness 自带的 Node 24 / pnpm / Python 3.12 与 numpy、pandas、"
+            "Pillow 等依赖，本机 289 MB。",
+       impact="⚠️ 删除后 Harness 完全无法运行，必须重装。"),
+
+    _r("ds-keep-credentials", "deepseek", "凭证与身份", "report",
+       [os.path.join(DSH, ".credentials.yaml"),
+        os.path.join(DSH, ".anonymous-user-id"),
+        os.path.join(DS_KEEP, "identity.json")],
+       level="keep", protected=True,
+       desc="登录凭证与匿名身份标识。",
+       impact="⚠️ 删除会掉登录，需要重新授权。"),
+
+    _r("ds-keep-plugins", "deepseek", "已装插件目录（含符号链接）", "report",
+       [os.path.join(DSH, "profiles", "desktop", "plugins")],
+       level="keep", protected=True,
+       desc="已安装插件的挂载点。本机其中 archived-sessions 是一个指向"
+            "「会话归档目录」的符号链接（指向你自己工作区里的真实数据）。",
+       impact="⚠️ 千万不要删：顺着符号链接会把你的会话归档目录一起清掉。"),
+
+    _r("ds-keep-desktop-state", "deepseek", "桌面端登录态与配置", "report",
+       [os.path.join(DS_DESKTOP, "Local Storage"),
+        os.path.join(DS_DESKTOP, "Session Storage"),
+        os.path.join(DS_DESKTOP, "WebStorage"),
+        os.path.join(DS_DESKTOP, "Network"),
+        os.path.join(DS_DESKTOP, "Preferences"),
+        os.path.join(DS_DESKTOP, "Local State")],
+       level="keep", protected=True,
+       desc="窗口里的登录态、Cookie、本地存储与偏好设置。",
+       impact="⚠️ 删除会掉登录并重置界面设置。"),
+
+    _r("ds-keep-workspace", "deepseek", "默认工作区与会话归档", "report",
+       [os.path.join(HOME, "Documents", "deepseek-harness")],
+       level="keep", protected=True,
+       desc="Harness 的默认工作区目录（当前为空目录，是本机用户数据位置）。",
+       impact="⚠️ 这是你的数据目录，不是缓存。"),
+]
+
+
 # ==================================================================== 系统（C 盘）
 SYSTEM_RULES = [
     # ---------- WinSxS / DISM ----------
@@ -474,15 +612,59 @@ SYSTEM_RULES = [
 ]
 
 
-ALL_RULES = WORKBUDDY_RULES + CODEX_RULES + SYSTEM_RULES
+ALL_RULES = WORKBUDDY_RULES + CODEX_RULES + DEEPSEEK_RULES + SYSTEM_RULES
 
 RULES_BY_GROUP = {
     "workbuddy": WORKBUDDY_RULES,
     "codex": CODEX_RULES,
+    "deepseek": DEEPSEEK_RULES,
     "system": SYSTEM_RULES,
 }
 
 RULES_BY_ID = {r.rid: r for r in ALL_RULES}
+
+
+def _build_protected():
+    """保护名单 = 显式补充路径 + 所有 protected=True 规则的路径。
+
+    单一事实来源：给规则打上 protected=True，它就自动进 guard() 用的保护名单，
+    不需要在保护名单里再抄一遍。之前两处各写一份，DeepSeek 那批规则就漏了——
+    界面上显示"保护"，实际删除时却拦不住，等于没有保护。
+    """
+    seen, out = set(), []
+    candidates = list(PROTECTED_EXTRA)
+    for r in ALL_RULES:
+        if r.protected:
+            for p in r.paths:
+                candidates.append((r.title, p))
+    for label, p in candidates:
+        key = util.norm_key(p)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append((label, p))
+    return out
+
+
+PROTECTED = _build_protected()
+
+# 「软件清理」分组：这些组面向具体软件，默认勾选必须严格限制在 safe 级，
+# 也就是「删掉不会影响软件正常使用」的那些。caution / danger 一律默认不勾，
+# 由用户在界面上看清影响说明后手动选择（见 tests/selftest.py 的强制校验）。
+SOFTWARE_GROUPS = ("workbuddy", "codex", "deepseek")
+
+
+def default_on_violations():
+    """返回所有「非安全级却默认勾选」的规则——这是必须为零的名单。"""
+    return [r for r in ALL_RULES
+            if r.default_on and r.level not in ("safe",)
+            and not r.protected and r.kind != "report"]
+
+
+def unchecked_but_actionable(rules):
+    """需要用户手动勾选的项（默认关闭且确实有内容可清）。"""
+    return [r for r in rules if not r.default_on and not r.protected
+            and r.kind != "report"]
 
 
 def group_rules(group, include_protected=False):

@@ -58,7 +58,8 @@ def test_rules():
     bad3 = [r.rid for r in R.ALL_RULES if r.requires_admin and r.group != "system"]
     check("仅系统组要求管理员", not bad3, str(bad3))
     three = {r.group for r in R.ALL_RULES}
-    check("三大功能分组齐全", three == {"workbuddy", "codex", "system"}, str(three))
+    check("四大功能分组齐全",
+          three == {"workbuddy", "codex", "deepseek", "system"}, str(three))
     n_req = len([r for r in R.ALL_RULES if not r.protected and r.kind != "report"])
     check("可清理项数量合理", n_req >= 20, "共 %d 条" % n_req)
 
@@ -234,7 +235,8 @@ def test_quarantine_roundtrip():
 def test_protected_not_selected():
     print("\n[6] 保护项不会被默认选中")
     losers = []
-    for group in ("workbuddy", "codex"):
+    losers = []
+    for group in R.SOFTWARE_GROUPS + ("system",):
         items = scanner.scan_group(group)
         sel = scanner.default_selection(items)
         for it in items:
@@ -336,6 +338,143 @@ def test_format_strings():
           "\n      ".join(problems[:6]))
 
 
+def test_default_selection_policy():
+    """强制约束：默认勾选只能落在「安全」级。
+
+    用户明确要求——所有软件清理项默认只勾选「删了不会影响软件正常使用」的那些，
+    其余（注意 / 高风险）必须默认不勾、由用户看清影响后手动选择。
+    这是产品行为的一部分，所以用测试钉死，防止以后加规则时又把它勾上。
+    """
+    print("\n[11] 默认勾选策略（回归）")
+    viol = R.default_on_violations()
+    check("没有「非安全级却默认勾选」的规则", not viol,
+          "；".join("%s(%s)" % (r.rid, r.level) for r in viol))
+
+    for group in R.SOFTWARE_GROUPS:
+        bad = [r.rid for r in R.group_rules(group) if r.default_on and r.level != "safe"]
+        check("%s 组默认勾选全是安全级" % group, not bad, str(bad))
+
+    manual = [r for r in R.ALL_RULES
+              if not r.default_on and not r.protected and r.kind not in ("report", "action")
+              and r.level in ("caution", "danger")]
+    check("确实存在需要手动勾选的风险项", len(manual) >= 5, "共 %d 项" % len(manual))
+    missing = [r.rid for r in manual if not r.impact.strip()]
+    check("风险项都写了影响说明", not missing, str(missing))
+
+    no_impact = [r.rid for r in R.ALL_RULES
+                 if r.default_on and not r.protected and r.kind != "report"
+                 and not r.impact.strip()]
+    check("默认勾选项也都写了影响说明", not no_impact, str(no_impact))
+
+
+def test_deepseek_specifics():
+    """DeepSeek Harness 专属护栏。"""
+    print("\n[12] DeepSeek Harness 规则（回归）")
+    rules = R.group_rules("deepseek")
+    ids = {r.rid for r in rules}
+    check("含更新器残留清理项",
+          "ds-updater-installer" in ids and "ds-updater-pending" in ids, str(sorted(ids)))
+    check("含桌面端缓存清理项", "ds-electron-cache" in ids)
+
+    home = os.path.expanduser("~")
+    deletable = [util.expand(p) for r in R.ALL_RULES
+                 if not r.protected and r.kind != "report" for p in r.paths]
+
+    runtime = util.expand(os.path.join(home, ".dsh", "dsh-runtimes"))
+    check("内置运行时不作为可删目标",
+          not any(util.is_subpath(p, runtime) for p in deletable), runtime)
+
+    cred = util.expand(os.path.join(home, ".dsh", ".credentials.yaml"))
+    check("凭证不作为可删目标",
+          not any(util.is_subpath(p, cred) for p in deletable))
+
+    check("保护名单覆盖 DeepSeek 运行时",
+          any(util.is_subpath(runtime, p) for _, p in R.PROTECTED)
+          or any(util.is_subpath(os.path.join(runtime, "x"), p) for _, p in R.PROTECTED),
+          "dsh-runtimes 未被 PROTECTED 覆盖")
+
+    # plugins 里有指向用户真实数据的符号链接，必须被守卫拦住
+    link = util.expand(os.path.join(home, ".dsh", "profiles", "desktop",
+                                    "plugins", "archived-sessions"))
+    try:
+        util.guard(link, [(l, p) for l, p in R.PROTECTED], must_exist=False)
+        blocked = False
+    except util.UnsafeTarget:
+        blocked = True
+    check("plugins 下的符号链接被守卫拦住", blocked, link)
+
+
+def test_days_override_semantics():
+    """回归：全局年龄下限只收紧、不放松单条规则自己的阈值。
+
+    规则里的 min_age_days 表达「这份数据要放这么久才敢删」（例如日志要等 2 天
+    避开正在运行的会话）。如果全局参数能把它调小，用户一个数字就把安全边界抹掉了。
+    之前是直接覆盖，导致 --days 3 会把 DeepSeek 那些 1~2 天龄的残留全排除掉，
+    界面上看起来「可回收 0 B」。
+    """
+    print("\n[13] 全局年龄下限语义（回归）")
+    base = tempfile.mkdtemp(prefix="wbcleaner-days-")
+    try:
+        d = os.path.join(base, "x", "y", "z")
+        touch(os.path.join(d, "fresh.bin"), b"a" * 1000, age_days=0)
+        touch(os.path.join(d, "old5.bin"), b"b" * 1000, age_days=5)
+        touch(os.path.join(d, "old40.bin"), b"c" * 1000, age_days=40)
+
+        loose = R.Rule("t-loose", "workbuddy", "t", "contents", [d],
+                       level="safe", min_age_days=0)
+        strict = R.Rule("t-strict", "workbuddy", "t", "contents", [d],
+                        level="danger", min_age_days=30)
+
+        check("不给全局值时不过滤年龄",
+              scanner.scan_rule(loose).files == 3,
+              "%d 个" % scanner.scan_rule(loose).files)
+        check("全局下限能收紧「无过滤」的规则",
+              scanner.scan_rule(loose, days_override=3).files == 2,
+              "%d 个" % scanner.scan_rule(loose, days_override=3).files)
+        check("全局下限调大后生效",
+              scanner.scan_rule(loose, days_override=10).files == 1,
+              "%d 个" % scanner.scan_rule(loose, days_override=10).files)
+
+        n_default = scanner.scan_rule(strict).files
+        n_override = scanner.scan_rule(strict, days_override=3).files
+        check("全局下限不会放松严格阈值",
+              n_default == n_override == 1,
+              "默认=%d 被覆盖后=%d" % (n_default, n_override))
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+
+def test_line_endings():
+    """回归：文本文件一律 LF，批处理一律 CRLF、不带 BOM。
+
+    Windows 上 `open(p, "w")` / `Path.write_text()` 默认会把 \\n 翻译成 \\r\\n，
+    实测被这个坑过两次（脚本批量改文件、生成图标预览页）——仓库里冒出一堆 CRLF。
+    所以：写文本时显式 `newline="\\n"`，并用这个测试兜住。
+    """
+    print("\n[14] 行尾规范（回归）")
+    lf_ext = {".py", ".js", ".css", ".html", ".md", ".json", ".toml"}
+    skip_dirs = {".git", ".cache", "reports", "logs", "__pycache__", "raw"}
+    bad_lf, bad_crlf, bom = [], [], []
+    for root, dirs, files in os.walk(ROOT):
+        dirs[:] = [d for d in dirs if d not in skip_dirs]
+        for name in files:
+            path = os.path.join(root, name)
+            rel = os.path.relpath(path, ROOT)
+            ext = os.path.splitext(name)[1].lower()
+            data = open(path, "rb").read()
+            if ext in (".bat", ".cmd"):
+                if b"\r\n" not in data:
+                    bad_crlf.append(rel)
+                if data[:3] == b"\xef\xbb\xbf":
+                    bom.append(rel)
+            elif ext in lf_ext or name in (".gitignore", ".gitattributes"):
+                if b"\r\n" in data:
+                    bad_lf.append(rel)
+    check("文本文件都是 LF 行尾", not bad_lf, str(bad_lf[:6]))
+    check("批处理都是 CRLF 行尾", not bad_crlf, str(bad_crlf[:6]))
+    check("批处理不带 BOM", not bom, str(bom))
+
+
 def main():
     print("=" * 62)
     print(" WBCleaner 自检（只在自己的临时目录里操作，不碰任何真实数据）")
@@ -350,6 +489,10 @@ def main():
     test_walk_stats_semantics()
     test_format_strings()
     test_no_hardcoded_paths()
+    test_default_selection_policy()
+    test_deepseek_specifics()
+    test_days_override_semantics()
+    test_line_endings()
     print("\n" + "=" * 62)
     print(" 通过 %d 项，失败 %d 项" % (len(PASS), len(FAIL)))
     if FAIL:

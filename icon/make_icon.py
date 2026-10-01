@@ -263,7 +263,7 @@ code{font-family:Consolas,Menlo,monospace;background:#eef1f6;padding:1px 5px;bor
     html = (html.replace("__HERO__", hero).replace("__REAL__", real)
                 .replace("__BLOWN__", blown).replace("__TASKBAR__", taskbar)
                 .replace("__NAMES__", names))
-    with open(path, "w", encoding="utf-8") as fh:
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(html)
 
 

@@ -66,7 +66,7 @@ def build_payload(scan, days, extra=None):
 
 def write_json(payload, path):
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
         json.dump(payload, fh, ensure_ascii=False, indent=2)
     return path
 
@@ -192,6 +192,6 @@ footer{margin-top:36px;color:#94a3b8;font-size:12px;border-top:1px solid #e5e9f0
 
 def write_html(payload, path):
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(render_html(payload))
     return path

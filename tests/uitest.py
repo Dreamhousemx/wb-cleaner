@@ -138,7 +138,7 @@ def main():
         # ---------------- 3 扫描
         print("\n[3] 扫描（SSE 进度）")
         t0 = time.time()
-        _, j = post("/api/scan", {"days": 3})
+        _, j = post("/api/scan", {})
         job = j.get("job")
         check("扫描任务已创建", bool(job), str(j))
         events = sse(job)
@@ -149,13 +149,14 @@ def main():
         check("收到 done 事件", kinds.get("done", 0) == 1, str(kinds))
         done = [e for e in events if e["type"] == "done"][0]["result"]
         groups = done["groups"]
-        check("返回三组结果",
-              set(groups) == {"workbuddy", "codex", "system"}, str(set(groups)))
+        check("返回四个分组结果",
+              set(groups) == {"workbuddy", "codex", "deepseek", "system"},
+              str(set(groups)))
         check("每组都有 items",
               all(len(g["items"]) > 0 for g in groups.values()))
         wb = groups["workbuddy"]
         check("WorkBuddy 有可回收体积", wb["total"] > 0, wb["totalHuman"])
-        check("天数过滤已生效", done["days"] == 3, str(done["days"]))
+        check("未指定年龄下限时按规则默认", done["days"] is None, str(done["days"]))
         check("含环境快照", "env" in done and done["env"]["disk"]["total"] > 0)
         print("     扫描耗时 %.1fs，可回收 %s / %s / %s" % (
             time.time() - t0, wb["totalHuman"],
@@ -167,11 +168,39 @@ def main():
                                       "impact", "actionable", "protected", "defaultOn")),
               str(sorted(item.keys())))
 
+        # DeepSeek Harness 分组
+        ds = groups["deepseek"]
+        check("DeepSeek 组已接入",
+              any(i["rid"].startswith("ds-") for i in ds["items"]),
+              "条目数 %d" % len(ds["items"]))
+        check("DeepSeek 组有可回收内容", ds["total"] > 0, ds["totalHuman"])
+        check("DeepSeek 组含更新器残留项",
+              any(i["rid"] == "ds-updater-installer" and i["actionable"] for i in ds["items"]))
+
+        # 默认勾选策略：非安全级一律不得默认选中（这是用户明确要求的行为）
+        bad = [(g["key"], i["rid"], i["level"])
+               for g in groups.values() for i in g["items"]
+               if i["defaultOn"] and i["level"] != "safe" and not i["protected"]]
+        check("默认勾选全部落在安全级", not bad, str(bad[:5]))
+
+        manual = [i for g in groups.values() for i in g["items"]
+                  if i["actionable"] and not i["defaultOn"] and not i["protected"]]
+        check("存在需手动勾选的风险项", len(manual) >= 5, "共 %d 项" % len(manual))
+        check("风险项都带影响说明",
+              all(i["impact"].strip() for i in manual
+                  if i["level"] in ("caution", "danger")),
+              str([i["rid"] for i in manual if not i["impact"].strip()][:4]))
+
+        # 保护项不能出现在默认勾选里
+        check("保护项不会被默认选中",
+              not [i for g in groups.values() for i in g["items"]
+                   if i["protected"] and i["defaultOn"]])
+
         # ---------------- 4 扫描缓存
         print("\n[4] 扫描结果缓存")
         _, body = get("/api/scan/cached")
         cached = json.loads(body)
-        check("缓存里有数据", bool(cached.get("groups")) and len(cached["groups"]) == 3)
+        check("缓存里有数据", bool(cached.get("groups")) and len(cached["groups"]) == 4)
         check("缓存带有时间戳", bool(cached.get("scannedAt")))
 
         # ---------------- 5 规则 / 保护名单
@@ -308,6 +337,12 @@ def main():
         check("index.html 无外部依赖（离线可用）",
               "http://" not in html_src and "https://" not in html_src,
               "含外部链接")
+        check("界面有 DeepSeek 入口", 'data-view="deepseek"' in html_src)
+        check("前端视图表含 deepseek", "'deepseek'" in js_src)
+        check("界面区分「需手动勾选」风险项",
+              "tag-manual" in js_src and "li-impact" in js_src)
+        check("CSS 定义了风险提示样式",
+              ".tag-manual" in css_src and ".li-impact" in css_src)
         check("界面未使用内联事件属性",
               "onclick=" not in html_src.lower(),
               "index.html 里出现了 onclick")

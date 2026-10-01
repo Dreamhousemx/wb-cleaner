@@ -247,7 +247,7 @@ class Logger:
             print(line)
         if self.path:
             try:
-                with open(self.path, "a", encoding="utf-8") as fh:
+                with open(self.path, "a", encoding="utf-8", newline="\n") as fh:
                     fh.write(line + "\n")
             except OSError:
                 pass

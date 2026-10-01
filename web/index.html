@@ -58,6 +58,10 @@
           <span class="ni-ico">◇</span><span class="ni-label">Codex</span>
           <span class="ni-size" data-size="codex"></span>
         </button>
+        <button class="nav-item" data-view="deepseek">
+          <span class="ni-ico">◈</span><span class="ni-label">DeepSeek Harness</span>
+          <span class="ni-size" data-size="deepseek"></span>
+        </button>
         <button class="nav-item" data-view="system">
           <span class="ni-ico">▣</span><span class="ni-label">C 盘系统</span>
           <span class="ni-size" data-size="system"></span>
@@ -77,14 +81,14 @@
 
       <div class="side-foot">
         <label class="field">
-          <span class="field-label">只清理多少天前的数据</span>
+          <span class="field-label">全局年龄下限（只收紧，不放松单条规则）</span>
           <select id="daysSelect">
-            <option value="">不限（按规则默认）</option>
-            <option value="1">1 天前</option>
-            <option value="3">3 天前</option>
-            <option value="7">7 天前</option>
-            <option value="14">14 天前</option>
-            <option value="30">30 天前</option>
+            <option value="">按各规则自身阈值</option>
+            <option value="1">只处理 1 天前的</option>
+            <option value="3">只处理 3 天前的</option>
+            <option value="7">只处理 7 天前的</option>
+            <option value="14">只处理 14 天前的</option>
+            <option value="30">只处理 30 天前的</option>
           </select>
         </label>
         <label class="switch">
