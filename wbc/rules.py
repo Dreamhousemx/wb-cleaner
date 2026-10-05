@@ -401,7 +401,7 @@ DEEPSEEK_RULES = [
     _r("ds-plugin-node-modules", "deepseek", "插件依赖 node_modules", "contents",
        [os.path.join(DSH, "profiles", "desktop", "node_modules")],
        level="caution", default_on=False,
-       desc="桌面端插件运行所需的 npm 依赖，本机 415 MB"
+       desc="桌面端插件运行所需的 npm 依赖，本机约 393 MB"
             "（含 sharp 的 libvips、mermaid 等大体积包）。",
        impact="删除后插件会启动失败，需要重新联网执行 pnpm install 才能恢复"
               "（依赖网络与镜像速度，可能耗时较久）。默认不勾选。"),
@@ -429,11 +429,12 @@ DEEPSEEK_RULES = [
        impact="⚠️ 删除会掉登录，需要重新授权。"),
 
     _r("ds-keep-plugins", "deepseek", "已装插件目录（含符号链接）", "report",
-       [os.path.join(DSH, "profiles", "desktop", "plugins")],
-       level="keep", protected=True,
-       desc="已安装插件的挂载点。本机其中 archived-sessions 是一个指向"
-            "「会话归档目录」的符号链接（指向你自己工作区里的真实数据）。",
-       impact="⚠️ 千万不要删：顺着符号链接会把你的会话归档目录一起清掉。"),
+        [os.path.join(DSH, "profiles", "desktop", "plugins")],
+        level="keep", protected=True,
+        desc="已安装插件的挂载点。该目录（或 node_modules 里）可能含指向"
+             "「会话归档目录」等真实用户数据的符号链接/junction。本机该目录为空，"
+             "链接位于 profiles/desktop/node_modules 下。",
+        impact="⚠️ 千万不要删：顺着链接会把你的真实数据目录一起清掉。"),
 
     _r("ds-keep-desktop-state", "deepseek", "桌面端登录态与配置", "report",
        [os.path.join(DS_DESKTOP, "Local Storage"),
@@ -452,6 +453,41 @@ DEEPSEEK_RULES = [
        desc="Harness 的默认工作区目录（当前为空目录，是本机用户数据位置）。",
        impact="⚠️ 这是你的数据目录，不是缓存。"),
 ]
+
+# ------------------------------------------------------------------ 链接探测
+# junction / 符号链接不是普通目录：删「目录」的常规做法会顺着链接删到目标去。
+# 这里在启动时探测一遍，把真实存在的链接显式写进规则说明，避免出现
+# 「说明里写 A、实际链接在 B」这种会随时间失效的硬编码描述。
+_LINK_SCAN = [
+    (os.path.join(DSH, "profiles", "desktop", "node_modules"), "node_modules"),
+    (os.path.join(DSH, "profiles", "desktop", "plugins"), "plugins"),
+]
+
+
+def _list_links(root, limit=3):
+    """root 下第一层的链接 / junction 名字（不递归）。"""
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        return []
+    return [n for n in names if util.is_link(os.path.join(root, n))][:limit]
+
+
+def _apply_link_notes():
+    """把探测到的链接信息追加到相关规则说明里（没有链接就不改）。"""
+    found = [(label, _list_links(root)) for root, label in _LINK_SCAN]
+    note = "".join("、".join("%s/%s" % (label, n) for n in names) + "；"
+                   for label, names in found if names)
+    if not note:
+        return
+    suffix = (" ⚠ 本机检测到链接/junction：%s它们只是链接，指向的真实数据在别处；"
+              "本工具只移除链接本身，不会跟随。" % note)
+    for rule in DEEPSEEK_RULES:
+        if rule.rid in ("ds-plugin-node-modules", "ds-keep-plugins"):
+            rule.desc += suffix
+
+
+_apply_link_notes()
 
 
 # ==================================================================== 系统（C 盘）

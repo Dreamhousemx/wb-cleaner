@@ -79,7 +79,12 @@ def scan_rule(rule, days_override=None, master_cutoff=None):
         item.mode = "contents"
         item.cutoff = cutoff if days > 0 else 0.0
         for p in existing:
-            if os.path.isfile(p):
+            if util.is_link(p):
+                # 极少数情况：规则目标本身就是链接。只算 1 个链接条目、
+                # 0 字节，绝不统计（更不删除）它背后的目标内容。
+                item.targets.append(p)
+                item.files += 1
+            elif os.path.isfile(p):
                 sz, cnt = util.walk_stats(p, cutoff=cutoff)
                 if sz:
                     item.targets.append(p)
@@ -109,7 +114,11 @@ def scan_rule(rule, days_override=None, master_cutoff=None):
                 if rule.name_glob and not _fnmatch(name, rule.name_glob):
                     continue
                 cp = os.path.join(p, name)
-                if os.path.isdir(cp):
+                if util.is_link(cp):
+                    # 链接 / junction 视为一个条目：算 0 字节、1 个文件，
+                    # 且不跟随目标（目标可能是别处的真实数据，不是这里的缓存）。
+                    sz, cnt = 0, 1
+                elif os.path.isdir(cp):
                     newest = util.newest_mtime(cp)
                     if days > 0 and newest and newest > cutoff:
                         continue  # 太新，保留

@@ -90,9 +90,15 @@ DISM /Online /Cleanup-Image /StartComponentCleanup /ResetBase   # 深度清理�
 
 ⚠️ 两个坑写在这里提醒：
 
-- `~/.dsh/profiles/desktop/plugins` 里有**指向你自己数据的符号链接**
-  （本机是 `archived-sessions` → 你的会话归档目录）。整个 `plugins` 目录在保护名单里，
-  顺着链接删会把真实数据一起清掉。
+- **符号链接 / junction 会被顺着删**（本机实测过，已修）：`~/.dsh/profiles/desktop/node_modules` 里有
+  `dsh-archived-sessions`，它是一个 **Windows junction**，指向你自己的会话归档目录（本机是工作区下的
+  `dsh-archived-sessions`）。junction 的坑在于 `os.path.islink()` 对它返回 `False`、
+  `os.path.isdir()` 返回 `True`，看起来就是普通目录；`shutil.move` 跨盘失败后 Python 的 `copytree`
+  会把**目标内容**当普通文件拷走，`rmtree` 再顺着链接把目标清空。旧代码因此会：
+  虚报释放空间、把目标内容搬进隔离区、留下一个空链接。现在统一用 `util.is_link()`
+  （junction + 符号链接）识别，命中的一律只删链接本身（`os.rmdir`），目标一个字节都不碰。
+  注意老 README 说的链接在 `plugins/` 下——本机 `plugins/` 是空的，链接实际在 `node_modules/` 下；
+  工具改成**运行时探测**并写进界面说明，不再硬编码位置。
 - 更新器的 `pending/` 里当前躺的是 `0.2.0-rc.1`，而系统里装的是 `0.2.0-rc.2`——
   是上一轮升级留下的旧包。判据来自 `~/.dsh/dsh-runtimes/*/runtime.json` 的 `desktopVersion`。
 
@@ -125,6 +131,12 @@ DISM /Online /Cleanup-Image /StartComponentCleanup /ResetBase   # 深度清理�
    避开正在运行的会话），全局参数不应该能把它调小。
 7. **保护名单自动汇总**：`protected=True` 的规则路径 + `PROTECTED_EXTRA` 补充项，
    去重后构成 `guard()` 用的名单——加保护只需给规则打一个标记。
+8. **链接 / junction 一律只删链接**：识别 symlink **和** Windows junction
+   （`util.is_junction` 读 `st_file_attributes & FILE_ATTRIBUTE_REPARSE_POINT`
+   与 `st_reparse_tag == IO_REPARSE_TAG_MOUNT_POINT`）；`remove_path`、`clean_contents`、
+   `walk_stats`、`newest_mtime`、扫描器的 `subdirs`/`contents` 分支全部先判链接：
+   体积按「0 字节、1 个条目」计，删除只移除重解析点本身，清点与年龄判断都不跟随目标。
+   回归测试见 `tests/selftest.py` 的 `[15] 链接 / junction 安全`。
 
 另外：所有删除都记日志到 `logs/wbcleaner-YYYYMMDD.log`，随时可核对做了什么。
 

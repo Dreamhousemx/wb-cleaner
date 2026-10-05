@@ -105,6 +105,86 @@ def is_subpath(child, parent):
     return c == p or c.startswith(p + os.sep)
 
 
+# ---------------------------------------------------------------- 符号链接 / junction
+
+# 0x400 = FILE_ATTRIBUTE_REPARSE_POINT；stat.IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003
+_REPARSE_POINT = 0x400
+_IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003
+
+
+def is_junction(path):
+    """Windows 目录 junction（mklink /J、目录挂载点）返回 True。
+
+    注意：junction **不是** symlink——`os.path.islink()` 对它返回 False，
+    但读起来就是目标目录。os.walk / shutil.rmtree 默认会顺着它走进去，
+    所以删除前必须单独认它，否则会把链接背后的真实数据一起清掉。
+    老版本 Python 的目录项没有 st_reparse_tag，无法区分 junction 与 symlink，
+    此时保守地按 junction 处理（两者都不能顺着删）。
+    """
+    if os.name != "nt":
+        return False
+    try:
+        st = os.lstat(expand(path))
+    except OSError:
+        return False
+    attrs = getattr(st, "st_file_attributes", 0)
+    if not (attrs & _REPARSE_POINT):
+        return False
+    tag = getattr(st, "st_reparse_tag", None)
+    if tag is None:
+        return True
+    return tag == _IO_REPARSE_TAG_MOUNT_POINT
+
+
+def is_symlink(path):
+    """符号链接（文件或目录）。"""
+    try:
+        return os.path.islink(expand(path))
+    except OSError:
+        return False
+
+
+def is_link(path):
+    """符号链接或 junction——凡是「读下去会到达别处」的目录项都算。"""
+    return is_symlink(path) or is_junction(path)
+
+
+def remove_link(path):
+    """只删链接本身，绝不顺着链接删目标内容。成功返回 True。
+
+    目录 junction / 目录符号链接用 os.rmdir（Windows 上移除重解析点），
+    文件符号链接用 os.remove。
+    """
+    p = expand(path)
+    try:
+        if os.path.isdir(p):
+            os.rmdir(p)
+        else:
+            os.remove(p)
+        return True
+    except OSError:
+        try:
+            os.chmod(p, stat.S_IWRITE)
+            if os.path.isdir(p):
+                os.rmdir(p)
+            else:
+                os.remove(p)
+            return True
+        except OSError:
+            return False
+
+
+def prune_link_dirs(root, dirs):
+    """给 os.walk 的 dirs 列表就地过滤：不进入链接/junction 指向的目录。
+
+    os.walk 默认对 symlink 与 junction 都会跟进去；清点体积时跟进去会把
+    目标数据的体积算到缓存头上，更糟的是把共享目录当成普通子目录处理。
+    """
+    if dirs:
+        dirs[:] = [d for d in dirs if not is_link(os.path.join(root, d))]
+    return dirs
+
+
 # ---------------------------------------------------------------- 体积
 
 
@@ -135,12 +215,15 @@ def walk_stats(path, min_age_days=0, cutoff=None):
     min_age_days > 0 时只统计「最后修改时间早于 N 天前」的文件。
     cutoff 可直接传入 time.time() 基准，方便测试。
     注意 cutoff=0 / None 都表示「不过滤年龄」——不要把它理解成"只统计 epoch 之前的文件"。
+    链接 / junction 本身按一个 0 字节文件计（它确实占了目录项），但不进入其目标目录。
     """
     if not cutoff:
         cutoff = (time.time() - min_age_days * 86400) if min_age_days else None
     total, count = 0, 0
     if not os.path.exists(path):
         return 0, 0
+    if is_link(path):
+        return 0, 1
     if os.path.isfile(path):
         try:
             if cutoff is None or os.path.getmtime(path) < cutoff:
@@ -149,6 +232,7 @@ def walk_stats(path, min_age_days=0, cutoff=None):
             pass
         return 0, 0
     for root, dirs, files in os.walk(path, onerror=lambda e: None):
+        prune_link_dirs(root, dirs)
         for f in files:
             fp = os.path.join(root, f)
             try:
@@ -164,14 +248,24 @@ def walk_stats(path, min_age_days=0, cutoff=None):
 
 
 def newest_mtime(path):
-    """目录树里最新的修改时间（用于判断整个目录有多"旧"）。"""
+    """目录树里最新的修改时间（用于判断整个目录有多"旧"）。
+
+    不跟随链接 / junction：链接的目标可能属于别的软件（甚至用户的文档），
+    它的修改时间与这个缓存目录"有多旧"无关。
+    """
     newest = 0.0
+    if is_link(path):
+        try:
+            return os.lstat(path).st_mtime
+        except OSError:
+            return 0.0
     if os.path.isfile(path):
         try:
             return os.path.getmtime(path)
         except OSError:
             return 0.0
     for root, dirs, files in os.walk(path, onerror=lambda e: None):
+        prune_link_dirs(root, dirs)
         for name in files + dirs:
             try:
                 newest = max(newest, os.path.getmtime(os.path.join(root, name)))

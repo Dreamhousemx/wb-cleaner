@@ -8,6 +8,7 @@
 
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -475,6 +476,113 @@ def test_line_endings():
     check("批处理不带 BOM", not bom, str(bom))
 
 
+def _make_link(link_path, target, logger=None):
+    """造一个目录 junction（Windows）或目录符号链接（其它系统）。
+
+    返回 "junction" / "symlink" / None。junction 不需要管理员权限；
+    某些受限环境会拒绝创建，此时返回 None，测试会自动降级跳过。
+    """
+    os.makedirs(os.path.dirname(link_path), exist_ok=True)
+    if os.name == "nt":
+        try:
+            rc = subprocess.call(["cmd", "/c", "mklink", "/J", link_path, target],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            return None
+        if rc == 0 and os.path.isdir(link_path):
+            return "junction"
+        return None
+    try:
+        os.symlink(target, link_path, target_is_directory=True)
+        return "symlink"
+    except OSError:
+        return None
+
+
+def test_link_safety():
+    """回归：链接 / junction 只删链接，绝不顺着它删目标。
+
+    背景：Windows 的目录 junction 是个「重解析点」，但 os.path.islink() 对它返回
+    False、os.path.isdir() 返回 True，看起来就是普通目录。旧代码用
+    `os.path.isdir(cp) and not os.path.islink(cp)` 判断，于是把 junction 当普通目录：
+    shutil.move 先因「不能跨盘移动」失败，退化到 copytree 把**目标内容**拷进隔离区，
+    再 rmtree 顺着链接把目标清空并原样留下链接——既虚报释放空间，又真的删数据。
+    """
+    print("\n[15] 链接 / junction 安全（回归）")
+    base = tempfile.mkdtemp(prefix="wbcleaner-link-")
+    try:
+        target = os.path.join(base, "target-data")
+        real = touch(os.path.join(target, "real.txt"), b"r" * 2048)
+        marker = os.path.join(target, "UNIQUE-MARKER.txt")
+        touch(marker, b"m" * 1024)
+
+        holder = os.path.join(base, "cache")
+        os.makedirs(holder)
+        touch(os.path.join(holder, "plain.txt"), b"p" * 512)
+        link = os.path.join(holder, "linked")
+
+        kind = _make_link(link, target)
+        if not kind:
+            print("  \033[33mSKIP\033[0m 本环境无法创建 junction/符号链接，跳过链接回归")
+            return
+
+        check("真目录不会被误判成链接", not util.is_link(holder), holder)
+        check("junction 被识别为链接（islink 认不出）",
+              util.is_link(link) and (os.name != "nt" or not os.path.islink(link)),
+              link)
+        check("prune_link_dirs 只过滤链接项",
+              util.prune_link_dirs(holder, ["linked", "sub"]) == ["sub"],
+              "未能过滤链接")
+
+        sz, cnt = util.walk_stats(holder, cutoff=0)
+        check("清点体积不统计链接背后的内容", sz < 5000,
+              "体积 %d 字节（目标 3072 字节疑似被计入）" % sz)
+
+        # 1) clean_contents：移走链接本身，目标数据必须原样还在
+        res = executor.ExecResult()
+        q = os.path.join(base, "trash")
+        executor.clean_contents(holder, 0, q, res, None)
+        check("clean_contents 移除了链接条目", not os.path.lexists(link), link)
+        check("clean_contents 没有跳过（不是报错收场）",
+              not res.skipped, str(res.skipped[:2]))
+        check("★ 链接目标数据完好（clean_contents）",
+              os.path.isfile(real) and os.path.getsize(real) == 2048,
+              "目标被删/被改：%s" % target)
+        check("★ 链接目标独有文件仍在", os.path.isfile(marker), marker)
+
+        # 2) permanent=True：同样不能跟进去
+        link2 = os.path.join(holder, "linked2")
+        if _make_link(link2, target):
+            res2 = executor.ExecResult()
+            executor.remove_path(link2, None, True, res2, None)
+            check("remove_path(permanent) 移除了链接",
+                  not os.path.lexists(link2), link2)
+            check("★ 链接目标在 permanent 模式下也完好",
+                  os.path.isfile(marker) and os.path.getsize(marker) == 1024,
+                  marker)
+
+        # 3) shutil.rmtree 的兜底回调：即使实现顺着目录走，也不能删到目标
+        link4 = os.path.join(base, "holder4", "linked4")
+        if _make_link(link4, target):
+            holder4 = os.path.dirname(link4)
+            shutil.rmtree(holder4, onerror=executor._on_rm_error)
+            check("rmtree 兜底后链接被移除", not os.path.lexists(link4), link4)
+            check("★ rmtree 兜底没有伤到链接目标", os.path.isfile(marker), marker)
+
+        # 4) 扫描器：链接算 1 个条目、0 字节
+        link3 = os.path.join(holder, "linked3")
+        if _make_link(link3, target):
+            rule = R.Rule("t-links", "workbuddy", "t", "subdirs", [holder],
+                          level="caution", default_on=False)
+            item = scanner.scan_rule(rule)
+            check("扫描器把链接记为 1 个条目",
+                  link3 in item.targets, str(item.targets))
+            check("扫描器不把链接目标的体积算进来",
+                  item.size < 5000, "%d 字节" % item.size)
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+
 def main():
     print("=" * 62)
     print(" WBCleaner 自检（只在自己的临时目录里操作，不碰任何真实数据）")
@@ -492,6 +600,7 @@ def main():
     test_default_selection_policy()
     test_deepseek_specifics()
     test_days_override_semantics()
+    test_link_safety()
     test_line_endings()
     print("\n" + "=" * 62)
     print(" 通过 %d 项，失败 %d 项" % (len(PASS), len(FAIL)))

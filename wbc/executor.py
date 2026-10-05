@@ -169,7 +169,22 @@ class ExecResult:
 
 
 def _on_rm_error(func, path, exc_info):
-    """只读文件先改权限再删。"""
+    """只读文件先改权限再删；链接 / junction 只移除重解析点本身。
+
+    junction 必须在这里兜住：它看起来是普通目录，一旦 rmtree 的实现退化成
+    「顺着目录走」的写法，就会把链接背后的真实数据一起删掉。只读标志也常常
+    挂在重解析点上，所以先 chmod 再 os.rmdir。
+    """
+    if util.is_link(path):
+        try:
+            os.chmod(path, stat.S_IWRITE)
+        except OSError:
+            pass
+        try:
+            os.rmdir(path)
+        except OSError:
+            pass
+        return
     try:
         os.chmod(path, stat.S_IWRITE)
         func(path)
@@ -209,6 +224,22 @@ def remove_path(path, quarantine=None, permanent=False, result=None, logger=None
         return size
 
     try:
+        if util.is_link(path):
+            size, files = 0, 1
+            if dry_run:
+                logger.debug("[演练] 将移除链接 %s（不跟随目标）" % util.short_path(path))
+                result.freed += size
+                result.files += files
+                return size
+            if util.remove_link(path):
+                if permanent:
+                    result.deleted += 1
+                else:
+                    result.moved += 1
+                result.files += files
+                logger.debug("已移除链接 %s（未跟随目标）" % util.short_path(path))
+                return size
+            raise OSError("无法移除链接（可能被占用）")
         if permanent:
             if os.path.isdir(path) and not os.path.islink(path):
                 shutil.rmtree(path, onerror=_on_rm_error)
@@ -295,7 +326,12 @@ def clean_contents(target, cutoff, quarantine, result, logger, dry_run=False):
     for name in children:
         cp = os.path.join(target, name)
         try:
-            if os.path.isdir(cp) and not os.path.islink(cp):
+            if util.is_link(cp):
+                # 链接 / junction 只移除链接本身，绝不顺着它删目标内容。
+                # （os.path.islink 认不出 Windows junction，会被当成普通目录递归进去，
+                #   把链接背后的真实数据一起清掉——这里必须用 util.is_link。）
+                remove_path(cp, quarantine, False, result, logger, dry_run)
+            elif os.path.isdir(cp):
                 newest = util.newest_mtime(cp)
                 if cutoff == 0 or (newest and newest < cutoff):
                     remove_path(cp, quarantine, False, result, logger, dry_run)

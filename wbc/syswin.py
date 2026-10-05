@@ -259,7 +259,11 @@ def wu_cache(logger):
                 p = os.path.join(root, name)
                 sz, _ = util.walk_stats(p, cutoff=0)
                 try:
-                    if os.path.isdir(p):
+                    if util.is_link(p):
+                        # 只移除链接，不顺着它删目标（更新缓存里也可能有重解析点）
+                        if not util.remove_link(p):
+                            raise OSError("无法移除链接")
+                    elif os.path.isdir(p):
                         shutil.rmtree(p, onerror=lambda f, x, e: None)
                     else:
                         os.remove(p)
