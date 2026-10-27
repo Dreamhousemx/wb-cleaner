@@ -262,6 +262,7 @@ node tests/fronttest.js                               # 27 项前端渲染逻辑
 wb-cleaner/
 ├── README.md             # 本文件
 ├── CHANGELOG.md          # 版本历史
+├── LICENSE               # MIT 许可证
 ├── wbcleaner.py          # 终端主程序：菜单 + 子命令
 ├── wbcleaner_ui.py       # 可视化界面入口（起本地服务 + 打开应用窗口）
 ├── wbc/
@@ -369,3 +370,10 @@ _r("my-rule", "workbuddy", "我的清理项", "contents",
 
 Windows 10/11，Python 3.8+（脚本用到 `dataclasses`）。**只用标准库，无需 pip 安装任何依赖。**
 `run.bat` 会自动优先使用 `~/.workbuddy/binaries/python/versions/` 下的托管 Python。
+
+## 许可
+
+[MIT](LICENSE) © 2026 Elio.Chen (Dreamhousemx)
+
+清理是不可逆操作，请务必先看「安全设计」和「注意事项」——
+工具按「先隔离、后确认」设计，但 `--permanent` 与 `dism resetbase` 绕过这层保护，用前请确认。
