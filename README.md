@@ -1,11 +1,15 @@
-# 扫尘 (WBCleaner)
+# 扫尘 (WBCleaner) v1.1.0
 
 > 把缓存与垃圾当灰尘扫掉，清理前一律先收进「匣子」——可还原。
 
-清理 **WorkBuddy**、**Codex** 产生的无用缓存，以及 **C 盘**系统级垃圾的 Windows 工具。
+清理 **WorkBuddy**、**Codex**、**DeepSeek Harness** 产生的无用缓存，以及 **C 盘**系统级垃圾的 Windows 工具。
 自带可视化界面，清理默认进隔离区、可一键还原。
 
 本机实测（2026-10-01）：WorkBuddy 目录 5.8 GB、Codex 目录 564 MB、WinSxS 12.37 GB。
+
+**版本**：`1.1.0` ｜ 版本历史见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本的主要变化是**链接 / junction 安全修复**（只删链接、绝不动目标数据），
+详见下面的「安全设计」与 `CHANGELOG.md`。
 
 **名字备选**：净匣（CleanVault）· 腾地方（MakeRoom）· 拾掇（Tidy）。
 想换名字只需改 `web/index.html` 的标题与 `wbcleaner_ui.py` 的 `APP_NAME`。
@@ -29,7 +33,19 @@
 再跑 `python icon/make_icon.py`。
 
 懒得手工设图标的话，`make-shortcut.bat` 可以一步在桌面建好带图标的快捷方式
-（执行 `tools/make_shortcut.py`，只在桌面新增一个 .lnk，需要时自己运行）。
+（执行 `tools/make_shortcut.py`，只在桌面新增一个 .lnk，需要时自己运行）：
+
+```
+python tools/make_shortcut.py                 # 桌面「扫尘」→ ui.bat（普通权限）
+python tools/make_shortcut.py --name 净匣      # 换个显示名
+python tools/make_shortcut.py --remove        # 删掉这个快捷方式
+```
+
+建好后双击即可启动，效果等同于双击 `ui.bat`。需要 DISM / 系统级清理时，
+请改用 `ui-admin.bat`（或界面顶栏的「一键提权」）。
+
+> 小提示：关掉界面窗口不会结束后台服务——`ui.bat` 的控制台窗口还在，服务就还在跑，
+> 下次启动会顺延到 8792 端口多开一个实例。彻底退出请关掉那个控制台窗口或按 `Ctrl+C`。
 
 ---
 
@@ -106,13 +122,13 @@ DISM /Online /Cleanup-Image /StartComponentCleanup /ResetBase   # 深度清理�
 
 ## 安全设计（这是本工具的核心）
 
-清理工具最怕误删。本工具做了五层防护：
+清理工具最怕误删。本工具做了七层防护：
 
 1. **默认只扫描**：`scan` 与交互式预览不发任何删除调用；执行前必须手工输入 `CLEAN` 确认。
 2. **保护名单（单一事实来源）**：给规则打上 `protected=True`，它就**自动**进入
    `guard()` 使用的保护名单；另有 `PROTECTED_EXTRA` 补充没有对应规则的路径
    （工作区 `.workbuddy/memory`、个人档案、WinSxS 本体）。
-   本机共 31 条保护路径：WorkBuddy 的运行时/凭证/登录态、Codex 的 `auth.json`/宿主程序、
+   本机共 33 条保护路径：WorkBuddy 的运行时/凭证/登录态、Codex 的 `auth.json`/宿主程序、
    DeepSeek Harness 的内置运行时（Node/Python 272 MB）与凭证、`Windows\Installer` 等。
    ⚠️ 曾经两处各维护一份名单，导致 DeepSeek 的保护项只显示在界面上、实际拦不住——
    现在改成自动汇总并加了回归测试。
@@ -129,9 +145,7 @@ DISM /Online /Cleanup-Image /StartComponentCleanup /ResetBase   # 深度清理�
    语义是**只收紧、不放松**：取「规则自身阈值」与「全局值」的较大者。
    规则里的 `min_age_days` 表达的是「这份数据要放这么久才敢删」（比如日志要等 2 天
    避开正在运行的会话），全局参数不应该能把它调小。
-7. **保护名单自动汇总**：`protected=True` 的规则路径 + `PROTECTED_EXTRA` 补充项，
-   去重后构成 `guard()` 用的名单——加保护只需给规则打一个标记。
-8. **链接 / junction 一律只删链接**：识别 symlink **和** Windows junction
+7. **链接 / junction 一律只删链接**：识别 symlink **和** Windows junction
    （`util.is_junction` 读 `st_file_attributes & FILE_ATTRIBUTE_REPARSE_POINT`
    与 `st_reparse_tag == IO_REPARSE_TAG_MOUNT_POINT`）；`remove_path`、`clean_contents`、
    `walk_stats`、`newest_mtime`、扫描器的 `subdirs`/`contents` 分支全部先判链接：
@@ -224,7 +238,7 @@ python wbcleaner.py dism analyze                      # 分析 WinSxS（只读�
 python wbcleaner.py dism cleanup                      # 标准清理
 python wbcleaner.py dism resetbase                    # 深度清理（不可逆）
 
-python tests/selftest.py                              # 72 项自检
+python tests/selftest.py                              # 86 项自检
 python tests/uitest.py                                # 93 项界面服务集成测试（只读 + 演练）
 node tests/fronttest.js                               # 27 项前端渲染逻辑测试（可单独跑）
 ```
@@ -246,6 +260,8 @@ node tests/fronttest.js                               # 27 项前端渲染逻辑
 
 ```
 wb-cleaner/
+├── README.md             # 本文件
+├── CHANGELOG.md          # 版本历史
 ├── wbcleaner.py          # 终端主程序：菜单 + 子命令
 ├── wbcleaner_ui.py       # 可视化界面入口（起本地服务 + 打开应用窗口）
 ├── wbc/
@@ -270,7 +286,7 @@ wb-cleaner/
 ├── tools/
 │   └── make_shortcut.py  # 可选：在桌面建带图标的快捷方式
 ├── tests/
-│   ├── selftest.py       # 72 项：规则 / 守卫 / 隔离还原闭环 / 格式串 / 默认勾选策略
+│   ├── selftest.py       # 86 项：规则 / 守卫 / 隔离还原闭环 / 格式串 / 链接安全 / 默认勾选策略
 │   ├── uitest.py         # 93 项：token 校验 / 各 API / SSE / dry-run / 前端静态一致性
 │   └── fronttest.js      # 27 项：在 Node 里跑真实 app.js，逐个视图验证渲染结果
 ├── reports/              # 生成的扫描报告
@@ -305,9 +321,9 @@ _r("my-rule", "workbuddy", "我的清理项", "contents",
    `GROUP_TITLES`，如果是软件类分组还要加进 `SOFTWARE_GROUPS`
 2. `wbc/scanner.py`：`scan_all()` 的默认分组元组里加上
 3. `wbcleaner.py`：菜单项与 `--group` 的 `choices`
-4. `web/index.html` + `web/app.js`：侧栏导航项、`VIEWS`、分组说明
+4. `web/index.html` + `web/app.js`：侧栏导航项与 `GROUP_VIEWS`（视图与渲染分支都由它展开）、分组说明
 
-改完跑 `python tests/selftest.py`（72 项，含「可删路径与保护名单无重叠」
+改完跑 `python tests/selftest.py`（86 项，含「可删路径与保护名单无重叠」
 「非安全级不得默认勾选」「本机专属路径不得硬编码」等护栏），
 再跑 `python tests/uitest.py`（93 项，含界面服务、前端静态一致性、
 以及在 Node 里跑真实 `app.js` 的渲染逻辑测试）。

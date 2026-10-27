@@ -137,7 +137,7 @@ if (!EXP) {
 const groups = fixture();
 EXP.S.groups = groups;
 EXP.S.env = {
-  version: '1.0.0', user: 'tester', admin: true, python: '3.13',
+  version: '1.1.0', user: 'tester', admin: true, python: '3.13',
   disk: { free: 1e11, total: 2e11, used: 1e11, freeHuman: '93 GB',
           totalHuman: '186 GB', usedHuman: '93 GB', usedPct: 50 },
   dism: null, trash: [], trashTotal: 0, trashTotalHuman: '0 B',

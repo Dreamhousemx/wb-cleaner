@@ -7,5 +7,5 @@
   4. 系统级动作（DISM / 服务 / 回收站）单独成组，默认不勾选，且需要管理员。
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __all__ = ["util", "rules", "scanner", "executor", "syswin", "report"]
